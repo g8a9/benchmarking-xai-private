@@ -237,7 +237,47 @@ class VizHelper:
 
 
     def get_soc(self, idx):
-        raise NotImplementedError()
+        from hiex import SamplingAndOcclusionExplain
+        from utils.config import configs
+        
+        # update SOC configs
+        configs.hiex = False
+        configs.lm_dir = "./lm_ami18"
+        configs.data_dir = "./data/"
+        configs.hiex_tree_height = 5
+        configs.hiex_add_itself = False
+        configs.hiex_abs = False
+
+        from miso_loader import MisoProcessor
+        processor = MisoProcessor(configs, tokenizer=self.tokenizer)
+
+        explainer = SamplingAndOcclusionExplain(
+            self.model,
+            configs,
+            self.tokenizer,
+            "./ami18",
+            "cuda:0",
+            lm_dir="./lm_ami18",
+            train_dataloader=processor.get_dataloader("train"),
+            dev_dataloader=processor.get_dataloader("dev"),
+            vocab=self.tokenizer.vocab,
+        )
+
+        item = self._get_item(idx)
+        
+        self.model.to("cuda")
+        scores = explainer.word_level_explanation_bert(
+            item["input_ids"].to("cuda"),
+            item["attention_mask"].to("cuda"),
+            item["token_type_ids"].to("cuda")
+        )
+
+        self.model.to("cpu")
+
+        scores = torch.tensor(scores)
+        scores /= scores.norm(dim=-1, p=1)
+        return scores
+
         
     def _get_attentions(self, idx, head, layer):
         outputs = self._forward(idx)
@@ -408,12 +448,16 @@ class VizHelper:
         # shap
         k_shap = self.get_kernel_shap(idx, target=target)
 
+        # SOC
+        soc = self.get_soc(idx) # target is always for class = 1 (see implementation)
+
         d = {
             "tokens": tokens,
             "G": normalized_grad,
             "GxI": grad_inputs,
             "IntegratedGradients": ig,
             "KernelSHAP": k_shap,
+            "SOC": soc
         }
         table = pd.DataFrame(d).set_index("tokens").T
         
