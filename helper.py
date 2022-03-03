@@ -1,3 +1,4 @@
+from builtins import breakpoint
 from multiprocessing.sharedctypes import Value
 from unicodedata import normalize
 import matplotlib.pyplot as plt 
@@ -6,7 +7,8 @@ from einops import rearrange
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from captum.attr import KernelShap
+from captum.attr import KernelShap, DeepLift, IntegratedGradients, DeepLiftShap
+
 
 class VizHelper:
     def __init__(self, model, tokenizer, raw_data, proc_data):
@@ -174,14 +176,66 @@ class VizHelper:
         fmask = torch.stack(fmask).unsqueeze(0)
 
         attr = ks.attribute(inputs, n_samples=200, feature_mask=fmask, show_progress=True)
-        attr = attr[0, :input_len, 0]
+        attr = attr[0, :input_len, 0] # attributions are equal on the last dim
+
+        return attr
+
+    def _generate_baselines(self, input_len=768):
+        return torch.tensor(
+            [self.tokenizer.cls_token_id] + 
+            [self.tokenizer.pad_token_id] * (input_len - 2) +
+            [self.tokenizer.sep_token_id]
+        ).unsqueeze(0)
+
+    def get_integrated_gradients(self, idx, target=1):
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum().item()
+
+        def func(input_embeds):
+            outputs = self.model(
+                inputs_embeds=input_embeds,
+                attention_mask=item["attention_mask"],
+                token_type_ids=item["token_type_ids"],
+            )
+            scores = outputs.logits.softmax(-1)[0]
+            return scores[target].unsqueeze(0)
+
+        dl = IntegratedGradients(func)
+        inputs = self._get_input_embeds(idx)
+
+        attr = dl.attribute(inputs, baselines=self._generate_baselines())
+        attr = attr[0, :input_len, :]
+
+        norm_attr = self._normalize_input_attributions(attr.detach())
+
+        return norm_attr
+
+
+    def get_deep_lift(self, idx, target=1):
+        raise NotImplementedError()
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum().item()
+
+        def func(input_embeds):
+            outputs = self.model(
+                inputs_embeds=input_embeds,
+                attention_mask=item["attention_mask"],
+                token_type_ids=item["token_type_ids"],
+            )
+            scores = outputs.logits.softmax(-1)[0]
+            return scores[target]
+
+        dl = DeepLiftShap(func)
+        inputs = self._get_input_embeds(idx)
+        baselines = torch.rand(5, *inputs.shape[1:])
+        print(baselines.shape)
+
+        attr = dl.attribute(inputs, baselines=baselines)
+        attr = attr[0, :input_len, :]
 
         return attr
 
 
-    def get_deep_shap(self, idx):
-        raise NotImplementedError()
-        
     def get_soc(self, idx):
         raise NotImplementedError()
         
@@ -319,10 +373,17 @@ class VizHelper:
         grad_input = torch.tensor(prods)
         grad_input /= grad_input.norm(dim=-1, p=1) # l1 normalization
 
-        normalized_grad = -grad[0].mean(-1) # avg over hidden size
-        normalized_grad /= normalized_grad.norm(dim=-1, p=1) # normalize over tokens
+        normalized_grad = self._normalize_input_attributions(grad[0])
+
+        # normalized_grad = grad[0].sum(-1) # avg over hidden size
+        # normalized_grad /= normalized_grad.norm(dim=-1, p=1) # normalize over tokens
 
         return grad_input, normalized_grad
+
+    def _normalize_input_attributions(self, attr):
+        attr = attr.sum(-1) # sum over hidden size
+        attr /= attr.norm(dim=-1, p=1) # L1 vector normalization
+        return attr
 
     def classify(self, idx):
         
@@ -342,6 +403,7 @@ class VizHelper:
         
         # saliency methods
         grad_inputs, normalized_grad = self.get_gradient(idx, target=target)
+        ig = self.get_integrated_gradients(idx, target=target)
 
         # shap
         k_shap = self.get_kernel_shap(idx, target=target)
@@ -350,8 +412,8 @@ class VizHelper:
             "tokens": tokens,
             "G": normalized_grad,
             "GxI": grad_inputs,
+            "IntegratedGradients": ig,
             "KernelSHAP": k_shap,
-
         }
         table = pd.DataFrame(d).set_index("tokens").T
         
