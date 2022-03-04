@@ -390,14 +390,19 @@ class VizHelper:
         return attr
 
     def classify(self, idx):
+        text = idx if isinstance(idx, str) else self.raw_data[idx]["text"]
         
         print("IDX:", idx)
-        print("Text:", self.raw_data[idx]["text"])
+        print("Text:", text)
         
-        outputs = self._forward(idx) 
+        outputs = self._forward(idx)
         logits = outputs.logits
         
-        print("True label:", self.raw_data[idx]["label"])
+        if not isinstance(idx, str):
+            print("True label:", self.raw_data[idx]["label"])
+
+        scores = torch.nn.functional.softmax(logits, -1)
+        print("Scores:", scores)
         print("Prediction:", logits.argmax(-1).item())
         
     def compute_table(self, idx, target=1):
