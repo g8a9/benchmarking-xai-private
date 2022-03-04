@@ -322,7 +322,7 @@ class VizHelper:
     
     def compare_attentions(self, idx, head, layer, **kwargs):
         fontsize = kwargs.get("fontsize", 14)
-        effective_model = kwargs.get("effective_model", self.model)
+        effective_model = kwargs["effective_model"]
         
         effective_attentions = self._get_effective_attention(idx, head, layer, effective_model)
         attentions = self._get_attentions(idx, head, layer)
