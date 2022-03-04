@@ -304,11 +304,12 @@ class VizHelper:
     def show_effective_attention(self, idx, head, **kwargs):
         layer = kwargs.get("layer", 10)
         fontsize = kwargs.get("fontsize", 14)
+        effective_model = kwargs["effective_model"]
         
         item = self.proc_data[idx]
         input_len = item["attention_mask"].sum()
         
-        effective_attention = self._get_effective_attention(idx, head, layer) 
+        effective_attention = self._get_effective_attention(idx, head, layer, effective_model=effective_model) 
             
         fig, ax = plt.subplots(figsize=(11,11))
         ax.imshow(effective_attention)
