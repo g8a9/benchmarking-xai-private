@@ -50,7 +50,6 @@ class VizHelper:
                 outputs = model(**item, output_attentions=True, output_hidden_states=True)
                 return outputs
 
-
         if no_grad:
             with torch.no_grad():
                 outputs = _foward_pass(use_inputs)
@@ -64,7 +63,7 @@ class VizHelper:
         if isinstance(idx, int):
             return self.proc_data[[idx]]
         elif isinstance(idx, str):
-            return self.tokenizer(idx)
+            return self.tokenizer(idx, return_tensors="pt")
         else:
             raise ValueError(f"{idx} is of unknown type")
 
@@ -118,42 +117,6 @@ class VizHelper:
             
         htas = torch.stack(htas)
         return htas
-
-
-    # def get_hta_old(self, idx, use_inputs=True):
-    #     """Hidden Token Attribution on input embeddings"""    
-    
-    #     # get input embeddings
-    #     item = self.proc_data[[idx]]
-    #     input_len = item["attention_mask"].sum()
-        
-    #     if use_inputs:
-        
-    #         embedding_matrix = self.model.bert.embeddings.word_embeddings.weight
-    #         vocab_size = embedding_matrix.shape[0]
-    #         onehot = torch.nn.functional.one_hot(item["input_ids"][0], vocab_size).float()
-    #         embeddings = torch.matmul(onehot, embedding_matrix)
-    #         embeddings = rearrange(embeddings, "s h -> () s h")
-            
-    #         outputs = self.model(
-    #             inputs_embeds=embeddings,
-    #             attention_mask=item["attention_mask"],
-    #             token_type_ids=item["token_type_ids"],
-    #         )
-            
-    #     else:
-    #         outputs = self._forward(idx, no_grad=False)
-    #         embeddings = outputs.hidden_states[0]
-
-    #     grad = torch.autograd.grad(
-    #         outputs.logits,
-    #         embeddings,
-    #         #grad_outputs=torch.ones_like(outputs.logits)
-    #     )[0]
-        
-    #     grad = torch.norm(grad, dim=2)[0]
-    #     grad = grad / torch.sum(grad)
-    #     return grad[: input_len]
     
     def get_kernel_shap(self, idx, target=1):
         item = self._get_item(idx)
@@ -216,7 +179,7 @@ class VizHelper:
         item = self._get_item(idx)
         input_len = item["attention_mask"].sum().item()
 
-        def func(input_embeds):
+        def func(input_embeds): 
             outputs = self.model(
                 inputs_embeds=input_embeds,
                 attention_mask=item["attention_mask"],
@@ -237,8 +200,9 @@ class VizHelper:
 
 
     def get_soc(self, idx):
-        from hiex import SamplingAndOcclusionExplain
+        from hiex.soc_api import SamplingAndOcclusionExplain
         from utils.config import configs
+        from miso_loader import MisoProcessor
         
         # update SOC configs
         configs.hiex = False
@@ -248,15 +212,14 @@ class VizHelper:
         configs.hiex_add_itself = False
         configs.hiex_abs = False
 
-        from miso_loader import MisoProcessor
         processor = MisoProcessor(configs, tokenizer=self.tokenizer)
 
         explainer = SamplingAndOcclusionExplain(
-            self.model,
-            configs,
-            self.tokenizer,
-            "./ami18",
-            "cuda:0",
+            model=self.model,
+            configs=configs,
+            tokenizer=self.tokenizer,
+            output_path="./ami18",
+            device="cuda:0",
             lm_dir="./lm_ami18",
             train_dataloader=processor.get_dataloader("train"),
             dev_dataloader=processor.get_dataloader("dev"),
@@ -437,9 +400,13 @@ class VizHelper:
         print("Prediction:", logits.argmax(-1).item())
         
     def compute_table(self, idx, target=1):
-        item = self.proc_data[idx]
-        input_len = item["attention_mask"].sum()
-        tokens = self.tokenizer.batch_decode(self.proc_data[idx]["input_ids"])[:input_len]
+        """Compute a comparison table.
+        
+        `idx` can either be an index of the dataset or a string
+        """
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum().item()
+        tokens = self.tokenizer.batch_decode(item["input_ids"][0])[:input_len]
         
         # saliency methods
         grad_inputs, normalized_grad = self.get_gradient(idx, target=target)
@@ -450,7 +417,7 @@ class VizHelper:
 
         # SOC
         soc = self.get_soc(idx) # target is always for class = 1 (see implementation)
-
+        
         d = {
             "tokens": tokens,
             "G": normalized_grad,
