@@ -8,7 +8,8 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from captum.attr import KernelShap, DeepLift, IntegratedGradients, DeepLiftShap
-
+from shap import Explainer
+from transformers import pipeline
 
 class VizHelper:
     def __init__(self, model, tokenizer, raw_data, proc_data):
@@ -143,6 +144,23 @@ class VizHelper:
 
         return attr
 
+    def get_transformer_shap(self, idx, target=1):
+        if isinstance(idx, int):
+            # no tokenization - raw data
+            text = self.raw_data[[idx]]['text']
+        elif isinstance(idx, str):
+            # no tokenization
+            text = [idx]
+        else:
+            raise ValueError(f"{idx} is of unknown type")
+        
+        pred = pipeline("text-classification", model=self.model, tokenizer=self.tokenizer,  return_all_scores=True)
+        
+        explainer_partition = Explainer(pred)
+        
+        shap_values = explainer_partition(text)
+        return shap_values.values[0][:, target]
+
     def _generate_baselines(self, input_len=768):
         return torch.tensor(
             [self.tokenizer.cls_token_id] + 
@@ -199,14 +217,14 @@ class VizHelper:
         return attr
 
 
-    def get_soc(self, idx):
+    def get_soc(self, idx, exp_name="ami18"):
         from hiex.soc_api import SamplingAndOcclusionExplain
         from utils.config import configs
         from miso_loader import MisoProcessor
         
         # update SOC configs
         configs.hiex = False
-        configs.lm_dir = "./lm_ami18"
+        configs.lm_dir = f"./lm_{exp_name}"
         configs.data_dir = "./data/"
         configs.hiex_tree_height = 5
         configs.hiex_add_itself = False
@@ -218,9 +236,9 @@ class VizHelper:
             model=self.model,
             configs=configs,
             tokenizer=self.tokenizer,
-            output_path="./ami18",
+            output_path=f"./exp_name",
             device="cuda:0",
-            lm_dir="./lm_ami18",
+            lm_dir=f"./lm_{exp_name}",
             train_dataloader=processor.get_dataloader("train"),
             dev_dataloader=processor.get_dataloader("dev"),
             vocab=self.tokenizer.vocab,
@@ -405,7 +423,14 @@ class VizHelper:
         print("Scores:", scores)
         print("Prediction:", logits.argmax(-1).item())
         
-    def compute_table(self, idx, target=1):
+    def get_predicted_label(self, idx):
+        outputs = self._forward(idx)
+        logits = outputs.logits
+
+        prediction = logits.argmax(-1).item()
+        return prediction
+
+    def compute_table(self, idx, target=1, exp_name="ami18"):
         """Compute a comparison table.
         
         `idx` can either be an index of the dataset or a string
@@ -421,8 +446,14 @@ class VizHelper:
         # shap
         k_shap = self.get_kernel_shap(idx, target=target)
 
+        # SHAP library - SHAP Partition with transformer
+        p_shap = self.get_transformer_shap(idx, target=target)
+        normalized_p_shap = torch.tensor(p_shap)
+        normalized_p_shap /= normalized_p_shap.norm(dim=-1, p=1)
+        
+
         # SOC
-        soc = self.get_soc(idx) # target is always for class = 1 (see implementation)
+        soc = self.get_soc(idx, exp_name=exp_name) # target is always for class = 1 (see implementation)
         
         d = {
             "tokens": tokens,
@@ -430,6 +461,7 @@ class VizHelper:
             "GxI": grad_inputs,
             "IntegratedGradients": ig,
             "KernelSHAP": k_shap,
+            "PartitionSHAP": normalized_p_shap,
             "SOC": soc
         }
         table = pd.DataFrame(d).set_index("tokens").T
