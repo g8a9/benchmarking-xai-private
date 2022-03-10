@@ -236,7 +236,7 @@ class VizHelper:
             model=self.model,
             configs=configs,
             tokenizer=self.tokenizer,
-            output_path=f"./exp_name",
+            output_path=f"./{exp_name}",
             device="cuda:0",
             lm_dir=f"./lm_{exp_name}",
             train_dataloader=processor.get_dataloader("train"),
