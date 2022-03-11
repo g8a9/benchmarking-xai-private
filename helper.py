@@ -11,6 +11,12 @@ from captum.attr import KernelShap, DeepLift, IntegratedGradients, DeepLiftShap
 from shap import Explainer
 from transformers import pipeline
 
+# SOC
+from hiex.soc_api import SamplingAndOcclusionExplain
+from utils.config import configs
+from soc import Processor
+
+
 class VizHelper:
     def __init__(self, model, tokenizer, raw_data, proc_data):
         self.model = model
@@ -194,51 +200,31 @@ class VizHelper:
 
     def get_deep_lift(self, idx, target=1):
         raise NotImplementedError()
-        item = self._get_item(idx)
-        input_len = item["attention_mask"].sum().item()
-
-        def func(input_embeds): 
-            outputs = self.model(
-                inputs_embeds=input_embeds,
-                attention_mask=item["attention_mask"],
-                token_type_ids=item["token_type_ids"],
-            )
-            scores = outputs.logits.softmax(-1)[0]
-            return scores[target]
-
-        dl = DeepLiftShap(func)
-        inputs = self._get_input_embeds(idx)
-        baselines = torch.rand(5, *inputs.shape[1:])
-        print(baselines.shape)
-
-        attr = dl.attribute(inputs, baselines=baselines)
-        attr = attr[0, :input_len, :]
-
-        return attr
 
 
-    def get_soc(self, idx, exp_name="ami18"):
-        from hiex.soc_api import SamplingAndOcclusionExplain
-        from utils.config import configs
-        from miso_loader import MisoProcessor
-        
+    def get_soc(self, idx, lm_dir, data_dir=None, train_file=None, valid_file=None):
         # update SOC configs
         configs.hiex = False
-        configs.lm_dir = f"./lm_{exp_name}"
-        configs.data_dir = "./data/"
+        configs.lm_dir = lm_dir
+        configs.data_dir = data_dir
         configs.hiex_tree_height = 5
         configs.hiex_add_itself = False
         configs.hiex_abs = False
 
-        processor = MisoProcessor(configs, tokenizer=self.tokenizer)
+        processor = Processor(
+            configs,
+            tokenizer=self.tokenizer,
+            train_file=train_file,
+            valid_file=valid_file
+        )
 
         explainer = SamplingAndOcclusionExplain(
             model=self.model,
             configs=configs,
             tokenizer=self.tokenizer,
-            output_path=f"./{exp_name}",
+            output_path=lm_dir, # shouldn't be used
             device="cuda:0",
-            lm_dir=f"./lm_{exp_name}",
+            lm_dir=lm_dir,
             train_dataloader=processor.get_dataloader("train"),
             dev_dataloader=processor.get_dataloader("dev"),
             vocab=self.tokenizer.vocab,
@@ -430,7 +416,7 @@ class VizHelper:
         prediction = logits.argmax(-1).item()
         return prediction
 
-    def compute_table(self, idx, target=1, exp_name="ami18"):
+    def compute_table(self, idx, target=1, **kwargs):
         """Compute a comparison table.
         
         `idx` can either be an index of the dataset or a string
@@ -450,10 +436,10 @@ class VizHelper:
         p_shap = self.get_transformer_shap(idx, target=target)
         normalized_p_shap = torch.tensor(p_shap)
         normalized_p_shap /= normalized_p_shap.norm(dim=-1, p=1)
-        
 
         # SOC
-        soc = self.get_soc(idx, exp_name=exp_name) # target is always for class = 1 (see implementation)
+        soc_kwargs = kwargs.get("soc_kwargs", dict())
+        soc = self.get_soc(idx, **soc_kwargs) # target is always for class = 1 (? see implementation)
         
         d = {
             "tokens": tokens,
