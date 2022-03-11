@@ -222,7 +222,7 @@ class VizHelper:
             model=self.model,
             configs=configs,
             tokenizer=self.tokenizer,
-            output_path=lm_dir, # shouldn't be used
+            output_path="hiex_output", # shouldn't be used
             device="cuda:0",
             lm_dir=lm_dir,
             train_dataloader=processor.get_dataloader("train"),
