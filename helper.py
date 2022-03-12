@@ -38,16 +38,9 @@ class VizHelper:
     
     def _get_input_embeds(self, idx):
         item = self._get_item(idx)
-        # embedding_matrix = self.model.bert.embeddings.word_embeddings.weight
-        # vocab_size = embedding_matrix.shape[0]
-        # onehot = torch.nn.functional.one_hot(item["input_ids"][0], vocab_size).float()
-        # embeddings = torch.matmul(onehot, embedding_matrix)
-        
         embeddings = self._get_input_embeds_from_ids(item["input_ids"][0])
         embeddings = rearrange(embeddings, "s h -> () s h")
         return embeddings
-
-    
     
     def _forward(self, idx, no_grad=True, model=None, use_inputs=False):
         model = model if model else self.model
@@ -182,12 +175,10 @@ class VizHelper:
         shap_values = explainer_partition(text)
         return shap_values.values[0][:, target]
 
-    def _generate_baselines(self, input_len=768):
-        return torch.tensor(
-            [self.tokenizer.cls_token_id] + 
-            [self.tokenizer.pad_token_id] * (input_len - 2) +
-            [self.tokenizer.sep_token_id]
-        ).unsqueeze(0)
+    def _generate_baselines(self, input_len):
+        ids = [self.tokenizer.cls_token_id] +  [self.tokenizer.pad_token_id] * (input_len - 2) + [self.tokenizer.sep_token_id]
+        embeddings = self._get_input_embeds_from_ids(torch.tensor(ids))
+        return embeddings.unsqueeze(0)
 
     def get_integrated_gradients(self, idx, target=1):
         item = self._get_item(idx)
@@ -204,8 +195,9 @@ class VizHelper:
 
         dl = IntegratedGradients(func, multiply_by_inputs=True)
         inputs = self._get_input_embeds(idx)
+        baselines = self._generate_baselines(input_len)
 
-        attr = dl.attribute(inputs, baselines=self._generate_baselines())
+        attr = dl.attribute(inputs, baselines=baselines)
         attr = attr[0, :input_len, :]
 
         norm_attr = self._normalize_input_attributions(attr.detach())
