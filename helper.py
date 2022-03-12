@@ -31,16 +31,23 @@ class VizHelper:
             return self.tokenizer(idx, return_tensors="pt")
         else:
             raise ValueError(f"{idx} is of unknown type")
+
+    def _get_input_embeds_from_ids(self, ids):
+        embeddings = self.model.bert.embeddings.word_embeddings(ids)
+        return embeddings
     
     def _get_input_embeds(self, idx):
         item = self._get_item(idx)
-
-        embedding_matrix = self.model.bert.embeddings.word_embeddings.weight
-        vocab_size = embedding_matrix.shape[0]
-        onehot = torch.nn.functional.one_hot(item["input_ids"][0], vocab_size).float()
-        embeddings = torch.matmul(onehot, embedding_matrix)
+        # embedding_matrix = self.model.bert.embeddings.word_embeddings.weight
+        # vocab_size = embedding_matrix.shape[0]
+        # onehot = torch.nn.functional.one_hot(item["input_ids"][0], vocab_size).float()
+        # embeddings = torch.matmul(onehot, embedding_matrix)
+        
+        embeddings = self._get_input_embeds_from_ids(item["input_ids"][0])
         embeddings = rearrange(embeddings, "s h -> () s h")
         return embeddings
+
+    
     
     def _forward(self, idx, no_grad=True, model=None, use_inputs=False):
         model = model if model else self.model
@@ -72,6 +79,15 @@ class VizHelper:
         
         return outputs
 
+    def _get_attentions(self, idx, head, layer):
+        outputs = self._forward(idx)
+        attentions = torch.cat(outputs.attentions)
+        attentions = rearrange(attentions, "l h s1 s2 -> h l s1 s2")
+        
+        item = self.proc_data[idx]
+        input_len = item["attention_mask"].sum()
+        attentions = attentions[head, layer, :input_len, :input_len]
+        return attentions
 
     def get_hta(self, idx, **kwargs):
         layer = kwargs.get("layer", 10)
@@ -197,10 +213,6 @@ class VizHelper:
         return norm_attr
 
 
-    def get_deep_lift(self, idx, target=1):
-        raise NotImplementedError()
-
-
     def get_soc(self, idx, lm_dir, data_dir=None, train_file=None, valid_file=None):
         # update SOC configs
         configs.hiex = False
@@ -244,16 +256,6 @@ class VizHelper:
         scores /= scores.norm(dim=-1, p=1)
         return scores
 
-        
-    def _get_attentions(self, idx, head, layer):
-        outputs = self._forward(idx)
-        attentions = torch.cat(outputs.attentions)
-        attentions = rearrange(attentions, "l h s1 s2 -> h l s1 s2")
-        
-        item = self.proc_data[idx]
-        input_len = item["attention_mask"].sum()
-        attentions = attentions[head, layer, :input_len, :input_len]
-        return attentions
     
     def show_attention(self, idx, head, **kwargs):
         layer = kwargs.get("layer", 10)
