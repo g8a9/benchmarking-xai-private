@@ -24,6 +24,13 @@ class VizHelper:
         self.proc_data = proc_data
         self.tokenizer = tokenizer
 
+    def _get_item(self, idx):
+        if isinstance(idx, int):
+            return self.proc_data[[idx]]
+        elif isinstance(idx, str):
+            return self.tokenizer(idx, return_tensors="pt")
+        else:
+            raise ValueError(f"{idx} is of unknown type")
     
     def _get_input_embeds(self, idx):
         item = self._get_item(idx)
@@ -65,14 +72,6 @@ class VizHelper:
         
         return outputs
 
-    
-    def _get_item(self, idx):
-        if isinstance(idx, int):
-            return self.proc_data[[idx]]
-        elif isinstance(idx, str):
-            return self.tokenizer(idx, return_tensors="pt")
-        else:
-            raise ValueError(f"{idx} is of unknown type")
 
     def get_hta(self, idx, **kwargs):
         layer = kwargs.get("layer", 10)
@@ -184,10 +183,10 @@ class VizHelper:
                 attention_mask=item["attention_mask"],
                 token_type_ids=item["token_type_ids"],
             )
-            scores = outputs.logits.softmax(-1)[0]
+            scores = outputs.logits[0]
             return scores[target].unsqueeze(0)
 
-        dl = IntegratedGradients(func)
+        dl = IntegratedGradients(func, multiply_by_inputs=True)
         inputs = self._get_input_embeds(idx)
 
         attr = dl.attribute(inputs, baselines=self._generate_baselines())
