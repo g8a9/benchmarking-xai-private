@@ -408,6 +408,8 @@ class VizHelper:
         scores = torch.nn.functional.softmax(logits, -1)
         print("Scores:", scores)
         print("Prediction:", logits.argmax(-1).item())
+
+        return scores, logits.argmax(-1).item()
         
     def get_predicted_label(self, idx):
         outputs = self._forward(idx)

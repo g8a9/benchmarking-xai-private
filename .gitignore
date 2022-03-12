@@ -1,8 +1,10 @@
 wandb
-data
+data*
 bert-*
 roberta-*
 plots
+soc_lm*
+logs
 
 
 # Byte-compiled / optimized / DLL files
