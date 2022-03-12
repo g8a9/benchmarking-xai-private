@@ -7,7 +7,7 @@ from einops import rearrange
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-from captum.attr import KernelShap, DeepLift, IntegratedGradients, DeepLiftShap
+from captum.attr import KernelShap, Saliency, IntegratedGradients, InputXGradient
 from shap import Explainer
 from transformers import pipeline
 
@@ -71,6 +71,11 @@ class VizHelper:
             outputs = _foward_pass(use_inputs)
         
         return outputs
+    
+    def _normalize_input_attributions(self, attr):
+        attr = attr.sum(-1) # sum over hidden size
+        attr /= attr.norm(dim=-1, p=1) # L1 vector normalization
+        return attr
 
     def _get_attentions(self, idx, head, layer):
         outputs = self._forward(idx)
@@ -179,7 +184,7 @@ class VizHelper:
         ids = [self.tokenizer.cls_token_id] +  [self.tokenizer.pad_token_id] * (input_len - 2) + [self.tokenizer.sep_token_id]
         embeddings = self._get_input_embeds_from_ids(torch.tensor(ids))
         return embeddings.unsqueeze(0)
-
+    
     def get_integrated_gradients(self, idx, target=1):
         item = self._get_item(idx)
         input_len = item["attention_mask"].sum().item()
@@ -201,9 +206,30 @@ class VizHelper:
         attr = attr[0, :input_len, :]
 
         norm_attr = self._normalize_input_attributions(attr.detach())
-
         return norm_attr
+    
+    def get_gradients(self, idx, target=1, multiply_by_inputs=False):
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum().item()
 
+        def func(input_embeds):
+            outputs = self.model(
+                inputs_embeds=input_embeds,
+                attention_mask=item["attention_mask"],
+                token_type_ids=item["token_type_ids"],
+            )
+            scores = outputs.logits[0]
+            return scores[target].unsqueeze(0)
+
+        dl = InputXGradient(func) if multiply_by_inputs else Saliency(func) 
+        
+        inputs = self._get_input_embeds(idx)
+        attr = dl.attribute(inputs)
+        attr = attr[0, :input_len, :]
+
+        norm_attr = self._normalize_input_attributions(attr.detach())
+        return norm_attr
+        
 
     def get_soc(self, idx, lm_dir, data_dir=None, train_file=None, valid_file=None):
         # update SOC configs
@@ -381,11 +407,6 @@ class VizHelper:
 
         return grad_input, normalized_grad
 
-    def _normalize_input_attributions(self, attr):
-        attr = attr.sum(-1) # sum over hidden size
-        attr /= attr.norm(dim=-1, p=1) # L1 vector normalization
-        return attr
-
     def classify(self, idx):
         text = idx if isinstance(idx, str) else self.raw_data[idx]["text"]
         
@@ -421,7 +442,9 @@ class VizHelper:
         tokens = self.tokenizer.batch_decode(item["input_ids"][0])[:input_len]
         
         # saliency methods
-        grad_inputs, normalized_grad = self.get_gradient(idx, target=target)
+        # grad_inputs, normalized_grad = self.get_gradient(idx, target=target)
+        grads = self.get_gradients(idx, target)
+        grads_by_inputs = self.get_gradients(idx, target, multiply_by_inputs=True)
         ig = self.get_integrated_gradients(idx, target=target)
 
         # shap
@@ -438,13 +461,14 @@ class VizHelper:
         
         d = {
             "tokens": tokens,
-            "G": normalized_grad,
-            "GxI": grad_inputs,
+            "G": grads,
+            "GxI": grads_by_inputs,
             "IntegratedGradients": ig,
             "KernelSHAP": k_shap,
             "PartitionSHAP": normalized_p_shap,
             "SOC": soc
         }
         table = pd.DataFrame(d).set_index("tokens").T
+        table = table.iloc[:, 1:-1]
         
         return table
