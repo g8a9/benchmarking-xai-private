@@ -10,6 +10,7 @@ from tqdm import tqdm
 from captum.attr import KernelShap, Saliency, IntegratedGradients, InputXGradient
 from shap import Explainer
 from transformers import pipeline
+import copy
 
 # SOC
 from hiex.soc_api import SamplingAndOcclusionExplain
@@ -437,6 +438,8 @@ class VizHelper:
         
         `idx` can either be an index of the dataset or a string
         """
+        d = dict()
+        
         item = self._get_item(idx)
         input_len = item["attention_mask"].sum().item()
         tokens = self.tokenizer.batch_decode(item["input_ids"][0])[:input_len]
@@ -448,7 +451,7 @@ class VizHelper:
         ig = self.get_integrated_gradients(idx, target=target)
 
         # shap
-        k_shap = self.get_kernel_shap(idx, target=target)
+        # k_shap = self.get_kernel_shap(idx, target=target)
 
         # SHAP library - SHAP Partition with transformer
         p_shap = self.get_transformer_shap(idx, target=target)
@@ -463,12 +466,38 @@ class VizHelper:
             "tokens": tokens,
             "G": grads,
             "GxI": grads_by_inputs,
-            "IntegratedGradients": ig,
-            "KernelSHAP": k_shap,
-            "PartitionSHAP": normalized_p_shap,
+            "IG": ig,
+            "SHAP": normalized_p_shap,
             "SOC": soc
         }
+        
         table = pd.DataFrame(d).set_index("tokens").T
         table = table.iloc[:, 1:-1]
         
         return table
+
+    def compute_occlusion_importance(self, idx, target=1):
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum().item()
+        input_ids = item["input_ids"][0][:input_len].tolist()
+
+        outputs = self._forward(idx)
+        logits = outputs.logits[0]
+        baseline = logits.softmax(-1)[target].item()
+
+        samples = list()
+        for occ_idx in range(len(input_ids)):
+            sample = copy.copy(input_ids)
+            sample.pop(occ_idx)
+            sample = self.tokenizer.decode(sample)
+            samples.append(sample)
+
+        inputs = self.tokenizer(samples, return_tensors="pt", padding=True)
+        
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+        
+        logits = outputs.logits.softmax(-1)[:, target]
+        occlusion_importance = baseline - logits
+        return occlusion_importance
+
