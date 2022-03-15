@@ -88,6 +88,12 @@ class VizHelper:
         attentions = attentions[head, layer, :input_len, :input_len]
         return attentions
 
+    def get_tokens(self, idx):
+        item = self._get_item(idx)
+        input_len = item["attention_mask"].sum()
+        return self.tokenizer.convert_ids_to_tokens(item["input_ids"][0][:input_len])
+
+
     def get_hta(self, idx, **kwargs):
         layer = kwargs.get("layer", 10)
 
@@ -421,7 +427,7 @@ class VizHelper:
             print("True label:", self.raw_data[idx]["label"])
 
         scores = torch.nn.functional.softmax(logits, -1)
-        print("Scores:", scores)
+        print("Probabilities:", scores)
         print("Prediction:", logits.argmax(-1).item())
 
         return scores, logits.argmax(-1).item()
@@ -479,7 +485,7 @@ class VizHelper:
     def compute_occlusion_importance(self, idx, target=1):
         item = self._get_item(idx)
         input_len = item["attention_mask"].sum().item()
-        input_ids = item["input_ids"][0][:input_len].tolist()
+        input_ids = item["input_ids"][0][:input_len].tolist()[1:-1]
 
         outputs = self._forward(idx)
         logits = outputs.logits[0]
@@ -492,12 +498,12 @@ class VizHelper:
             sample = self.tokenizer.decode(sample)
             samples.append(sample)
 
-        inputs = self.tokenizer(samples, return_tensors="pt", padding=True)
+        inputs = self.tokenizer(samples, return_tensors="pt", padding="longest")
         
         with torch.no_grad():
             outputs = self.model(**inputs)
         
         logits = outputs.logits.softmax(-1)[:, target]
-        occlusion_importance = baseline - logits
+        occlusion_importance = logits - baseline
         return occlusion_importance
 
