@@ -79,12 +79,12 @@ class VizHelper:
         return attr
 
     def _get_attentions(self, idx, head, layer):
+        item = self._get_item(idx)
+        input_len = item["attention_mask"][0].sum().item()
+        
         outputs = self._forward(idx)
         attentions = torch.cat(outputs.attentions)
         attentions = rearrange(attentions, "l h s1 s2 -> h l s1 s2")
-        
-        item = self.proc_data[idx]
-        input_len = item["attention_mask"].sum()
         attentions = attentions[head, layer, :input_len, :input_len]
         return attentions
 
@@ -304,7 +304,7 @@ class VizHelper:
         fig.tight_layout()
     
     def _get_effective_attention(self, idx, head, layer, effective_model):
-        item = self.proc_data[idx]
+        item = self._get_item(idx)
         input_len = item["attention_mask"].sum()
         
         outputs = self._forward(idx, model=effective_model)
@@ -353,26 +353,38 @@ class VizHelper:
     def compare_attentions(self, idx, head, layer, **kwargs):
         fontsize = kwargs.get("fontsize", 14)
         effective_model = kwargs["effective_model"]
+        remove_special_tokens = kwargs.get("remove_special_tokens", True)
         
         effective_attentions = self._get_effective_attention(idx, head, layer, effective_model)
         attentions = self._get_attentions(idx, head, layer)
         hta = self.get_hta(idx, layer=layer)
         
+        if remove_special_tokens:
+            effective_attentions = effective_attentions[1:-1, 1:-1]
+            attentions = attentions[1:-1, 1:-1]
+            hta = hta[1:-1, 1:-1]
+        
         fig, ax = plt.subplots(ncols=3, figsize=(18,8), sharey=True)
         ax1, ax2, ax3 = ax
         ax1.imshow(attentions)
+        #ax1.set_title("Attention")
         ax2.imshow(effective_attentions)
+        #ax2.set_title("Effective attention")
         ax3.imshow(hta)
+        #ax3.set_title("HTA")
 
         item = self._get_item(idx)
         input_len = item["attention_mask"].sum().item()
 
         ticks = self.tokenizer.batch_decode(item["input_ids"][0][:input_len])
         
-        list(map(lambda x: x.set_xticks(np.arange(input_len)), ax))
+        if remove_special_tokens:
+            ticks = ticks[1:-1]
+            
+        list(map(lambda x: x.set_xticks(np.arange(len(ticks))), ax))
         list(map(lambda x: x.set_xticklabels(ticks, rotation=90, fontsize=fontsize), ax))
         
-        ax1.set_yticks(np.arange(input_len))
+        ax1.set_yticks(np.arange(len(ticks)))
         ax1.set_yticklabels(ticks, fontsize=fontsize)
         
         #ax1.set_xticks()
