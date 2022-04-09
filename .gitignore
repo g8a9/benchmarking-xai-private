@@ -5,6 +5,7 @@ roberta-*
 plots
 soc_lm*
 logs
+ex_*
 
 
 # Byte-compiled / optimized / DLL files
